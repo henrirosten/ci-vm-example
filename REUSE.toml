@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: 2025 TII (SSRC) and the Ghaf contributors
+# SPDX-License-Identifier: Apache-2.0
+
+version = 1
+SPDX-PackageSupplier = "Technology Innovation Institute <https://tii.ae>"
+
+[[annotations]]
+SPDX-License-Identifier = "Apache-2.0"
+SPDX-FileCopyrightText = "2025 TII (SSRC) and the Ghaf contributors"
+precedence = "closest"
+path = [
+  "**"
+]

@@ -1,0 +1,13 @@
+keys:
+  # users
+  - &hrosten age1hc6hszepd5xezxkgd3yx74pn3scxjm5w6px48m4rq9yj7w6rke7q72zhgn
+
+  # hosts
+  - &jenkins-controller age1h6572ak0520k7jpjtm7rga7nsc480rs8xmql9mfp9g3nultg4ejsup2tjn
+
+creation_rules:
+  - path_regex: hosts/jenkins-controller/secrets.yaml$
+    key_groups:
+    - age:
+      - *jenkins-controller
+      - *hrosten
