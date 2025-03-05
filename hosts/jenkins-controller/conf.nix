@@ -26,7 +26,6 @@ in
   };
   virtualisation.vmVariant.sops.age.sshKeyPaths = [ "/shared/ssh_host_ed25519_key" ];
 
-  nixpkgs.hostPlatform = lib.mkDefault "x86_64-linux";
   networking = {
     hostName = "jenkins-controller";
     firewall.allowedTCPPorts = [

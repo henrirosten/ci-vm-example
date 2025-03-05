@@ -22,6 +22,7 @@ in
         (import ./vm-nixos-qemu.nix { })
         self.nixosModules.nixos-builder
         {
+          nixpkgs.hostPlatform = "x86_64-linux";
           # https://github.com/NixOS/nixpkgs/blob/master/nixos/modules/virtualisation/qemu-vm.nix
           virtualisation.vmVariant.virtualisation.forwardPorts = [
             {
@@ -42,6 +43,7 @@ in
         })
         self.nixosModules.nixos-jenkins-controller
         {
+          nixpkgs.hostPlatform = "x86_64-linux";
           # https://github.com/NixOS/nixpkgs/blob/master/nixos/modules/virtualisation/qemu-vm.nix
           virtualisation.vmVariant.virtualisation.forwardPorts = [
             {
