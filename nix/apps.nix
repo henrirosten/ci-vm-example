@@ -28,30 +28,26 @@ let
     ${pkgs.lib.getExe pkgs.sops} --extract '["ssh_host_ed25519_key"]' --decrypt "$secret" >"$tofile"
     echo "[+] Decrypted sops key '$tofile'"
   '';
+  run-vm-with-secrets =
+    cfg: name:
+    (pkgs.writeShellScriptBin "run-vm-with-secrets" ''
+      echo "[+] Running $(realpath "$0")"
+      secret="${self.outPath}/hosts/${name}/secrets.yaml"
+      todir="${cfg.virtualisation.vmVariant.virtualisation.sharedDirectories.shr.source}"
+      ${decrypt-sops-key} "$secret" "$todir"
+      ${pkgs.lib.getExe cfg.system.build.vm}
+      rm -fr "$todir/ssh_host_ed25519_key"
+    '');
 in
 {
   flake.apps."x86_64-linux" = {
     run-vm-builder = {
       type = "app";
-      program = pkgs.writeShellScriptBin "builder-vm-with-secrets" ''
-        echo "[+] Running $(realpath "$0")"
-        secret="${self.outPath}/hosts/builder/secrets.yaml"
-        todir="${self.nixosConfigurations.vm-builder.config.virtualisation.vmVariant.virtualisation.sharedDirectories.shr.source}"
-        ${decrypt-sops-key} "$secret" "$todir"
-        ${pkgs.lib.getExe self.nixosConfigurations.vm-builder.config.system.build.vm}
-        rm -fr "$todir/ssh_host_ed25519_key"
-      '';
+      program = run-vm-with-secrets self.nixosConfigurations.vm-builder.config "builder";
     };
     run-vm-jenkins-controller = {
       type = "app";
-      program = pkgs.writeShellScriptBin "jenkins-controller-with-secrets" ''
-        echo "[+] Running $(realpath "$0")"
-        secret="${self.outPath}/hosts/jenkins-controller/secrets.yaml"
-        todir="${self.nixosConfigurations.vm-jenkins-controller.config.virtualisation.vmVariant.virtualisation.sharedDirectories.shr.source}"
-        ${decrypt-sops-key} "$secret" "$todir"
-        ${pkgs.lib.getExe self.nixosConfigurations.vm-jenkins-controller.config.system.build.vm}
-        rm -fr "$todir/ssh_host_ed25519_key"
-      '';
+      program = run-vm-with-secrets self.nixosConfigurations.vm-jenkins-controller.config "jenkins-controller";
     };
   };
   flake.apps."aarch64-linux" = {
