@@ -15,6 +15,10 @@
   virtualisation.vmVariant.virtualisation.useNixStoreImage = true;
   virtualisation.vmVariant.virtualisation.mountHostNixStore = false;
   virtualisation.vmVariant.virtualisation.writableStoreUseTmpfs = false;
+  virtualisation.vmVariant.virtualisation.qemu.options = [
+    "-device virtio-balloon"
+    "-cpu host,+x2apic,-sgx"
+  ];
   virtualisation.vmVariant.zramSwap = {
     enable = true;
     algorithm = "zstd";
