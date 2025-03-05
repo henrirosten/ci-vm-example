@@ -15,4 +15,9 @@
   virtualisation.vmVariant.virtualisation.useNixStoreImage = true;
   virtualisation.vmVariant.virtualisation.mountHostNixStore = false;
   virtualisation.vmVariant.virtualisation.writableStoreUseTmpfs = false;
+  virtualisation.vmVariant.zramSwap = {
+    enable = true;
+    algorithm = "zstd";
+    memoryPercent = 100;
+  };
 }

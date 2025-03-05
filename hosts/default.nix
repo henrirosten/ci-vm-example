@@ -38,7 +38,6 @@ in
       inherit specialArgs;
       modules = [
         (import ./vm-nixos-qemu.nix {
-          ram_gb = 20;
           disk_gb = 150;
         })
         self.nixosModules.nixos-jenkins-controller
