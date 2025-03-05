@@ -25,11 +25,11 @@ in
     target = "/shared";
   };
   virtualisation.vmVariant.services.openssh.hostKeys = [
-      {
-        path = "/shared/ssh_host_ed25519_key";
-        type = "ed25519";
-      }
-    ];
+    {
+      path = "/shared/ssh_host_ed25519_key";
+      type = "ed25519";
+    }
+  ];
 
   networking = {
     hostName = "jenkins-controller";

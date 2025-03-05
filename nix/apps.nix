@@ -33,11 +33,18 @@ in
   flake.apps."x86_64-linux" = {
     run-vm-builder = {
       type = "app";
-      program = self.nixosConfigurations.vm-builder.config.system.build.vm;
+      program = pkgs.writeShellScriptBin "builder-vm-with-secrets" ''
+        echo "[+] Running $(realpath "$0")"
+        secret="${self.outPath}/hosts/builder/secrets.yaml"
+        todir="${self.nixosConfigurations.vm-builder.config.virtualisation.vmVariant.virtualisation.sharedDirectories.shr.source}"
+        ${decrypt-sops-key} "$secret" "$todir"
+        ${pkgs.lib.getExe self.nixosConfigurations.vm-builder.config.system.build.vm}
+        rm -fr "$todir/ssh_host_ed25519_key"
+      '';
     };
     run-vm-jenkins-controller = {
       type = "app";
-      program = pkgs.writeShellScriptBin "jenkins-nixosvm-with-secrets" ''
+      program = pkgs.writeShellScriptBin "jenkins-controller-with-secrets" ''
         echo "[+] Running $(realpath "$0")"
         secret="${self.outPath}/hosts/jenkins-controller/secrets.yaml"
         todir="${self.nixosConfigurations.vm-jenkins-controller.config.virtualisation.vmVariant.virtualisation.sharedDirectories.shr.source}"

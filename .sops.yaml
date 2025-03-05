@@ -4,10 +4,16 @@ keys:
 
   # hosts
   - &jenkins-controller age1h6572ak0520k7jpjtm7rga7nsc480rs8xmql9mfp9g3nultg4ejsup2tjn
+  - &builder age1deq579c2gchrvn4aua88qz75wtw9gzzedeqe3k3mcyzwse4x8s5qfeayhq
 
 creation_rules:
   - path_regex: hosts/jenkins-controller/secrets.yaml$
     key_groups:
     - age:
       - *jenkins-controller
+      - *hrosten
+  - path_regex: hosts/builder/secrets.yaml$
+    key_groups:
+    - age:
+      - *builder
       - *hrosten
