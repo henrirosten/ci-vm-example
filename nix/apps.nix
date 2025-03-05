@@ -47,4 +47,10 @@ in
       '';
     };
   };
+  flake.apps."aarch64-linux" = {
+    run-vm-builder = {
+      type = "app";
+      program = self.nixosConfigurations.vm-builder-aarch.config.system.build.vm;
+    };
+  };
 }

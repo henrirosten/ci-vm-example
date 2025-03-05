@@ -35,6 +35,25 @@ in
       ];
     };
 
+    vm-builder-aarch = inputs.nixpkgs.lib.nixosSystem {
+      inherit specialArgs;
+      modules = [
+        (import ./vm-nixos-qemu.nix { })
+        self.nixosModules.nixos-builder
+        {
+          nixpkgs.hostPlatform = "aarch64-linux";
+          # https://github.com/NixOS/nixpkgs/blob/master/nixos/modules/virtualisation/qemu-vm.nix
+          virtualisation.vmVariant.virtualisation.forwardPorts = [
+            {
+              from = "host";
+              host.port = 2322;
+              guest.port = 22;
+            }
+          ];
+        }
+      ];
+    };
+
     vm-jenkins-controller = inputs.nixpkgs.lib.nixosSystem {
       inherit specialArgs;
       modules = [
