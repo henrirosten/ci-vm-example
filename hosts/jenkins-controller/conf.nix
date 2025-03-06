@@ -164,40 +164,11 @@ in
     };
     script = ''
       mkdir -p /etc/nix
-      # Retrieved with 'base64 -w0 /etc/ssh/ssh_host_ed25519_key.pub'
-      build4_pubkey='c3NoLWVkMjU1MTkgQUFBQUMzTnphQzFsWkRJMU5URTVBQUFBSU1yTFJWQWk3ZERYVUYxRUZUZDdvSEx5b2x4RlNrRTZNUk9YdklNK1VxRG8gcm9vdEBidWlsZDQK'
-      hetzarm_pubkey='c3NoLWVkMjU1MTkgQUFBQUMzTnphQzFsWkRJMU5URTVBQUFBSUx4NHpVNGdJa1RZLzFvS0VPa2Y5Z1RKQ2hkeC9qUjNsRGdaN3AvYzdMRUsgcm9vdEBVYnVudHUtMjIwNC1qYW1teS1hcm02NC1iYXNlCg=='
-      common_elems='/run/secrets/remote_build_ssh_key 8 10 kvm,nixos-test,benchmark,big-parallel -'
-      echo "ssh://remote-build@build4.vedenemo.dev x86_64-linux $common_elems $build4_pubkey" >/etc/nix/machines
-      echo "ssh://remote-build@hetzarm.vedenemo.dev aarch64-linux $common_elems $hetzarm_pubkey" >>/etc/nix/machines
+      common='- 8 10 kvm,nixos-test,benchmark,big-parallel - -'
+      echo "ssh://builder.vedenemo.dev x86_64-linux $common" >/etc/nix/machines
+      echo "ssh://hetzarm.vedenemo.dev aarch64-linux $common" >>/etc/nix/machines
     '';
   };
-
-  # fail2ban on the builder(s) dislike ssh-keyscan if repeated too quickly
-  # which is why we manually hardcode the base64 encoded public key in the
-  # 'populate-builder-machines' service, instead of using the below service:
-  #systemd.services.populate-known-hosts = {
-  #  after = [
-  #    "network-online.target"
-  #    "populate-builder-machines.service"
-  #  ];
-  #  before = [ "nix-daemon.service" ];
-  #  requires = [
-  #    "network-online.target"
-  #    "populate-builder-machines.service"
-  #  ];
-  #  wantedBy = [ "multi-user.target" ];
-  #  serviceConfig = {
-  #    Type = "oneshot";
-  #    RemainAfterExit = true;
-  #    Restart = "on-failure";
-  #  };
-  #  script = ''
-  #    umask 077
-  #    mkdir -p /root/.ssh
-  #    cat /etc/nix/machines | cut -d" " -f1 | cut -d" " -f1 | cut -d "@" -f2 | xargs ${pkgs.openssh}/bin/ssh-keyscan -v -t ed25519 > /root/.ssh/known_hosts
-  #  '';
-  #};
 
   # Enable early out-of-memory killing.
   # Make nix builds more likely to be killed over more important services.
@@ -220,12 +191,36 @@ in
   boot.kernel.sysctl."vm.overcommit_memory" = "1";
 
   nix.extraOptions = ''
-    trusted-public-keys = prod-cache.vedenemo.dev~1:JcytRNMJJdYJVQCYwLNsrfVhct5dhCK2D3fa6O1WHOI= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
-    substituters = https://prod-cache.vedenemo.dev https://cache.nixos.org
+    trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
+    substituters = https://cache.nixos.org
     connect-timeout = 5
     system-features = nixos-test benchmark big-parallel kvm
-    builders-use-substitutes = true
+    builders-use-substitutes = false
     builders = @/etc/nix/machines
-    max-jobs = 1
+    max-jobs = 0
   '';
+  programs.ssh = {
+    knownHosts."build4.vedenemo.dev".publicKey =
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMrLRVAi7dDXUF1EFTd7oHLyolxFSkE6MROXvIM+UqDo";
+    knownHosts."builder.vedenemo.dev".publicKey =
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHSI8s/wefXiD2h3I3mIRdK+d9yDGMn0qS5fpKDnSGqj";
+    knownHosts."hetzarm.vedenemo.dev".publicKey =
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILx4zU4gIkTY/1oKEOkf9gTJChdx/jR3lDgZ7p/c7LEK";
+    extraConfig = lib.mkAfter ''
+      Host builder.vedenemo.dev
+      Hostname builder.vedenemo.dev
+      User remote-build
+      IdentityFile /run/secrets/remote_build_ssh_key
+
+      Host build4.vedenemo.dev
+      Hostname build4.vedenemo.dev
+      User remote-build
+      IdentityFile /run/secrets/remote_build_ssh_key
+
+      Host hetzarm.vedenemo.dev
+      Hostname hetzarm.vedenemo.dev
+      User remote-build
+      IdentityFile /run/secrets/remote_build_ssh_key
+    '';
+  };
 }
