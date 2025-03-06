@@ -7,6 +7,39 @@
 }:
 let
   jenkins-casc = ./jenkins-casc.yaml;
+  run-builder-vm = pkgs.writeShellScript "run-builder-vm" ''
+    set -eu
+    remote="$1"
+    nix_target="$2"
+    local_port="$3"
+    TMPWORKDIR="$(mktemp -d --suffix .ci-vm-tmpdir)"
+    echo "Using TMPWORKDIR: '$TMPWORKDIR'"
+    on_term () {
+      set -x
+      # TODO: if jenkins-controller is not shutdown gracefully, then
+      # TMPWORKDIR on the remote will not be removed.
+      echo "Removing '$TMPWORKDIR' on '$remote'"
+      ${pkgs.openssh}/bin/ssh "$remote" "rm -fr $TMPWORKDIR || echo Failed"
+    }
+    trap on_term TERM
+
+    # Copy the flake source from /shared/source over to remote at TMPWORKDIR
+    # so we can nix run the nix_target on remote
+    ${pkgs.openssh}/bin/scp -r /shared/source "$remote":"$TMPWORKDIR"
+
+    # Run the builder vm on the remote over ssh, forwarding the
+    # 'localhost:local_port' over to remote port '2322'. After builder vm
+    # boots-up, its ssh service is available on remote:2322 so this allows
+    # reaching the remote builder over ssh at localhost:local_port.
+    # The '-tt' option causes the remote process (nix run ...) to terminate
+    # when the below ssh process is terminated.
+    echo "Starting builder vm '$nix_target' - ssh at local port '$local_port'"
+    ${pkgs.openssh}/bin/ssh -L "$local_port":localhost:2322 "$remote" -tt \
+    "\
+      cd "$TMPWORKDIR";\
+      nix run --refresh .#"$nix_target";\
+    ";
+  '';
 in
 {
   sops.defaultSopsFile = ./secrets.yaml;
@@ -21,12 +54,12 @@ in
       user-hrosten
     ]);
   virtualisation.vmVariant.virtualisation.sharedDirectories.shr = {
-    source = "/tmp/shared/jenkins-controller";
+    source = "$HOME/.config/vmshared/jenkins-controller";
     target = "/shared";
   };
   virtualisation.vmVariant.services.openssh.hostKeys = [
     {
-      path = "/shared/ssh_host_ed25519_key";
+      path = "/shared/secrets/ssh_host_ed25519_key";
       type = "ed25519";
     }
   ];
@@ -164,9 +197,24 @@ in
     };
     script = ''
       mkdir -p /etc/nix
-      common='- 8 10 kvm,nixos-test,benchmark,big-parallel - -'
-      echo "ssh://builder.vedenemo.dev x86_64-linux $common" >/etc/nix/machines
-      echo "ssh://hetzarm.vedenemo.dev aarch64-linux $common" >>/etc/nix/machines
+      echo "ssh://ephemeral-build4 x86_64-linux - 4 10 kvm,nixos-test,benchmark,big-parallel" >/etc/nix/machines
+    '';
+  };
+
+  systemd.services.builder-vm-x86-start = {
+    after = [ "network-online.target" ];
+    before = [ "nix-daemon.service" ];
+    requires = [ "network-online.target" ];
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      RemainAfterExit = true;
+      Restart = "no";
+    };
+    script = ''
+      remote="build4.vedenemo.dev"
+      nix_target="apps.x86_64-linux.run-vm-builder"
+      local_port="3022"
+      ${run-builder-vm} "$remote" "$nix_target" "$local_port"
     '';
   };
 
@@ -207,6 +255,13 @@ in
     knownHosts."hetzarm.vedenemo.dev".publicKey =
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILx4zU4gIkTY/1oKEOkf9gTJChdx/jR3lDgZ7p/c7LEK";
     extraConfig = lib.mkAfter ''
+      Host ephemeral-build4
+      Hostname localhost
+      Port 3022
+      User remote-builder
+      IdentityFile /run/secrets/id_builder
+      StrictHostKeyChecking no
+
       Host builder.vedenemo.dev
       Hostname builder.vedenemo.dev
       User remote-build
