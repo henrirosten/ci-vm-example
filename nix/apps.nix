@@ -4,56 +4,66 @@
   ...
 }:
 let
-  pkgs = import inputs.nixpkgs { system = "x86_64-linux"; };
-  decrypt-sops-key = pkgs.writeShellScript "decrypt-sops-key" ''
-    set -eu
-    on_err () {
-      echo "[+] Failed decrypting sops key: VM will boot-up without secrets"
-      # Wait for user input if stdout is to a terminal (and not to file or pipe)
-      if [ -t 1 ]; then
-        echo; read -n 1 -srp "Press any key to continue"; echo
+  decrypt-sops-key =
+    pkgs:
+    (pkgs.writeShellScript "decrypt-sops-key" ''
+      set -eu
+      on_err () {
+        echo "[+] Failed decrypting sops key: VM will boot-up without secrets"
+        # Wait for user input if stdout is to a terminal (and not to file or pipe)
+        if [ -t 1 ]; then
+          echo; read -n 1 -srp "Press any key to continue"; echo
+        fi
+        exit 1
+      }
+      trap on_err ERR
+      if [ $# -ne 2 ] || [ -z "$1" ] || [ -z "$2" ]; then
+        on_err
       fi
-      exit 1
-    }
-    trap on_err ERR
-    if [ $# -ne 2 ] || [ -z "$1" ] || [ -z "$2" ]; then
-      on_err
-    fi
-    secret="$1"
-    todir="$2"
-    mkdir -p "$todir"
-    rm -fr "$todir/ssh_host_ed25519_key"
-    tofile="$todir/ssh_host_ed25519_key"
-    umask 377
-    ${pkgs.lib.getExe pkgs.sops} --extract '["ssh_host_ed25519_key"]' --decrypt "$secret" >"$tofile"
-    echo "[+] Decrypted sops key '$tofile'"
-  '';
+      secret="$1"
+      todir="$2"
+      mkdir -p "$todir"
+      rm -fr "$todir/ssh_host_ed25519_key"
+      tofile="$todir/ssh_host_ed25519_key"
+      umask 377
+      ${pkgs.lib.getExe pkgs.sops} --extract '["ssh_host_ed25519_key"]' --decrypt "$secret" >"$tofile"
+      echo "[+] Decrypted sops key '$tofile'"
+    '');
+
   run-vm-with-secrets =
-    cfg: name:
+    pkgs: cfg:
     (pkgs.writeShellScriptBin "run-vm-with-secrets" ''
       echo "[+] Running $(realpath "$0")"
-      secret="${self.outPath}/hosts/${name}/secrets.yaml"
+      secret="${self.outPath}/hosts/${cfg.system.name}/secrets.yaml"
       todir="${cfg.virtualisation.vmVariant.virtualisation.sharedDirectories.shr.source}"
-      ${decrypt-sops-key} "$secret" "$todir"
+      ${decrypt-sops-key pkgs} "$secret" "$todir"
       ${pkgs.lib.getExe cfg.system.build.vm}
       rm -fr "$todir/ssh_host_ed25519_key"
     '');
 in
 {
-  flake.apps."x86_64-linux" = {
-    run-vm-builder = {
-      type = "app";
-      program = run-vm-with-secrets self.nixosConfigurations.vm-builder.config "builder";
+  flake.apps."x86_64-linux" =
+    let
+      pkgs = import inputs.nixpkgs { system = "x86_64-linux"; };
+    in
+    {
+      run-vm-builder = {
+        type = "app";
+        program = run-vm-with-secrets pkgs self.nixosConfigurations.vm-builder-x86.config;
+      };
+      run-vm-jenkins-controller = {
+        type = "app";
+        program = run-vm-with-secrets pkgs self.nixosConfigurations.vm-jenkins-controller.config;
+      };
     };
-    run-vm-jenkins-controller = {
-      type = "app";
-      program = run-vm-with-secrets self.nixosConfigurations.vm-jenkins-controller.config "jenkins-controller";
+  flake.apps."aarch64-linux" =
+    let
+      pkgs = import inputs.nixpkgs { system = "aarch64-linux"; };
+    in
+    {
+      run-vm-builder = {
+        type = "app";
+        program = run-vm-with-secrets pkgs self.nixosConfigurations.vm-builder-aarch.config;
+      };
     };
-  };
-  flake.apps."aarch64-linux" = {
-    run-vm-builder = {
-      type = "app";
-      program = self.nixosConfigurations.vm-builder-aarch.config.system.build.vm;
-    };
-  };
 }
