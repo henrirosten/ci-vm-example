@@ -49,21 +49,17 @@ in
     {
       run-vm-builder = {
         type = "app";
-        program = run-vm-with-secrets pkgs self.nixosConfigurations.vm-builder-x86.config;
+        program = self.nixosConfigurations.vm-builder-x86.config.system.build.vm;
       };
       run-vm-jenkins-controller = {
         type = "app";
         program = run-vm-with-secrets pkgs self.nixosConfigurations.vm-jenkins-controller.config;
       };
     };
-  flake.apps."aarch64-linux" =
-    let
-      pkgs = import inputs.nixpkgs { system = "aarch64-linux"; };
-    in
-    {
-      run-vm-builder = {
-        type = "app";
-        program = run-vm-with-secrets pkgs self.nixosConfigurations.vm-builder-aarch.config;
-      };
+  flake.apps."aarch64-linux" = {
+    run-vm-builder = {
+      type = "app";
+      program = self.nixosConfigurations.vm-builder-aarch.config.system.build.vm;
     };
+  };
 }
