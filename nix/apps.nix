@@ -35,10 +35,11 @@ let
     (pkgs.writeShellScriptBin "run-vm-with-share" ''
       set -eu
       echo "[+] Running '$(realpath "$0")'"
-      # Host path of the shared directory
+      # Host path of the shr share directory
       sharedir="${cfg.virtualisation.vmVariant.virtualisation.sharedDirectories.shr.source}"
+      # See nixpkgs: virtualisation/qemu-vm.nix
+      export TMPDIR="$sharedir"
       on_exit () {
-        # Remove the shared directory on exit
         echo "[+] Removing '$sharedir'"
         rm -fr "$sharedir"
       }
@@ -50,9 +51,26 @@ let
       ${decrypt-sops-key pkgs} "$secret" "$todir"
 
       # Copy the flake source tree to the share
-      cp -a -R --no-preserve=mode,ownership "${self.outPath}" "$sharedir/source"
+      umask 077; cp -a -R --no-preserve=mode,ownership "${self.outPath}" "$sharedir/source"
 
       # Run vm with the share mounted inside the virtual machine
+      ${pkgs.lib.getExe cfg.system.build.vm}
+    '');
+
+  run-vm =
+    pkgs: cfg:
+    (pkgs.writeShellScriptBin "run-vm" ''
+      set -eu
+      echo "[+] Running '$(realpath "$0")'"
+      if [ -z "$TMPDIR" ]; then
+        export TMPDIR="$(mktemp --directory --suffix .nix-vm-tmpdir)"
+      fi
+      on_exit () {
+        echo "[+] Removing '$TMPDIR'"
+        rm -fr "$TMPDIR"
+      }
+      trap on_exit EXIT
+
       ${pkgs.lib.getExe cfg.system.build.vm}
     '');
 in
@@ -64,17 +82,21 @@ in
     {
       run-vm-builder = {
         type = "app";
-        program = self.nixosConfigurations.vm-builder-x86.config.system.build.vm;
+        program = run-vm pkgs self.nixosConfigurations.vm-builder-x86.config;
       };
       run-vm-jenkins-controller = {
         type = "app";
         program = run-vm-with-share pkgs self.nixosConfigurations.vm-jenkins-controller.config;
       };
     };
-  flake.apps."aarch64-linux" = {
-    run-vm-builder = {
-      type = "app";
-      program = self.nixosConfigurations.vm-builder-aarch.config.system.build.vm;
+  flake.apps."aarch64-linux" =
+    let
+      pkgs = import inputs.nixpkgs { system = "aarch64-linux"; };
+    in
+    {
+      run-vm-builder = {
+        type = "app";
+        program = run-vm pkgs self.nixosConfigurations.vm-builder-aarch.config;
+      };
     };
-  };
 }

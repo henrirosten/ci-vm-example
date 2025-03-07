@@ -12,12 +12,10 @@ let
     remote="$1"
     nix_target="$2"
     local_port="$3"
-    TMPWORKDIR="$(mktemp -d --suffix .ci-vm-tmpdir)"
-    echo "Using TMPWORKDIR: '$TMPWORKDIR'"
+    TMPWORKDIR="$(mktemp --dry-run --directory --suffix .nix-vm-builder)"
+    echo "Using TMPWORKDIR '$TMPWORKDIR' on remote '$remote'"
     on_term () {
       set -x
-      # TODO: if jenkins-controller is not shutdown gracefully, then
-      # TMPWORKDIR on the remote will not be removed.
       echo "Removing '$TMPWORKDIR' on '$remote'"
       ${pkgs.openssh}/bin/ssh "$remote" "rm -fr $TMPWORKDIR || echo Failed"
     }
@@ -36,6 +34,7 @@ let
     echo "Starting builder vm '$nix_target' - ssh at local port '$local_port'"
     ${pkgs.openssh}/bin/ssh -L "$local_port":localhost:2322 "$remote" -tt \
     "\
+      export TMPDIR="$TMPWORKDIR"
       cd "$TMPWORKDIR";\
       nix run --refresh .#"$nix_target";\
     ";
@@ -53,6 +52,7 @@ in
       hosts-common
       user-hrosten
     ]);
+
   virtualisation.vmVariant.virtualisation.sharedDirectories.shr = {
     source = "$HOME/.config/vmshared/jenkins-controller";
     target = "/shared";
@@ -196,9 +196,16 @@ in
       Restart = "on-failure";
     };
     script = ''
+      # If this is not the first time this instance of jenkins-controller
+      # boots-up, the ephemeral builders' public keys from the pervious power
+      # cycle might still be around in /root/.ssh/known_hosts. Since we
+      # spin-up new ephemeral builders every time jenkins-controller
+      # boots-up, we also need to clean the /root/.ssh/known_hosts
+      rm -fr /root/.ssh/known_hosts
+
       mkdir -p /etc/nix
-      echo "ssh://ephemeral-build4 x86_64-linux - 4 10 kvm,nixos-test,benchmark,big-parallel" >/etc/nix/machines
-      echo "ssh://ephemeral-hetzarm aarch64-linux - 4 10 kvm,nixos-test,benchmark,big-parallel" >>/etc/nix/machines
+      echo "ssh://ephemeral-build4 x86_64-linux - 20 10 kvm,nixos-test,benchmark,big-parallel" >/etc/nix/machines
+      echo "ssh://ephemeral-hetzarm aarch64-linux - 20 10 kvm,nixos-test,benchmark,big-parallel" >>/etc/nix/machines
     '';
   };
 
@@ -266,13 +273,18 @@ in
     max-jobs = 0
   '';
   programs.ssh = {
+
+    # Known builder host public keys, these go to /root/.ssh/known_hosts
     knownHosts."build4.vedenemo.dev".publicKey =
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMrLRVAi7dDXUF1EFTd7oHLyolxFSkE6MROXvIM+UqDo";
     knownHosts."builder.vedenemo.dev".publicKey =
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHSI8s/wefXiD2h3I3mIRdK+d9yDGMn0qS5fpKDnSGqj";
     knownHosts."hetzarm.vedenemo.dev".publicKey =
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILx4zU4gIkTY/1oKEOkf9gTJChdx/jR3lDgZ7p/c7LEK";
+
+    # Custom options to /etc/ssh/ssh_config
     extraConfig = lib.mkAfter ''
+      # VM we spin-up on build4.vedenemo.dev with builder-vm-x86-start service
       Host ephemeral-build4
       Hostname localhost
       Port 3022
@@ -281,6 +293,7 @@ in
       # We check the build4.vedenemo.dev key already
       StrictHostKeyChecking no
 
+      # VM we spin-up on hetzarm.vedenemo.dev with builder-vm-aarch-start service
       Host ephemeral-hetzarm
       Hostname localhost
       Port 4022

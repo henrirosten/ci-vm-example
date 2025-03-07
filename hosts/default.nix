@@ -11,15 +11,19 @@ in
 {
   flake.nixosModules = {
     hosts-common = import ./hosts-common.nix;
-    nixos-builder = ./builder/conf.nix;
-    nixos-jenkins-controller = ./jenkins-controller/conf.nix;
+    nixos-builder = import ./builder/conf.nix;
+    nixos-jenkins-controller = import ./jenkins-controller/conf.nix;
   };
 
   flake.nixosConfigurations = {
     vm-builder-x86 = inputs.nixpkgs.lib.nixosSystem {
       inherit specialArgs;
       modules = [
-        (import ./vm-nixos-qemu.nix { })
+        (import ./vm-nixos-qemu.nix {
+          disk_gb = 200;
+          vcpus = 20;
+          ram_gb = 40;
+        })
         self.nixosModules.nixos-builder
         {
           nixpkgs.hostPlatform = "x86_64-linux";
@@ -37,7 +41,11 @@ in
     vm-builder-aarch = inputs.nixpkgs.lib.nixosSystem {
       inherit specialArgs;
       modules = [
-        (import ./vm-nixos-qemu.nix { })
+        (import ./vm-nixos-qemu.nix {
+          disk_gb = 200;
+          vcpus = 20;
+          ram_gb = 40;
+        })
         self.nixosModules.nixos-builder
         {
           nixpkgs.hostPlatform = "aarch64-linux";
@@ -56,7 +64,7 @@ in
       inherit specialArgs;
       modules = [
         (import ./vm-nixos-qemu.nix {
-          disk_gb = 150;
+          disk_gb = 200;
         })
         self.nixosModules.nixos-jenkins-controller
         {
