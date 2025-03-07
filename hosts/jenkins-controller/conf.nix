@@ -198,6 +198,7 @@ in
     script = ''
       mkdir -p /etc/nix
       echo "ssh://ephemeral-build4 x86_64-linux - 4 10 kvm,nixos-test,benchmark,big-parallel" >/etc/nix/machines
+      echo "ssh://ephemeral-hetzarm aarch64-linux - 4 10 kvm,nixos-test,benchmark,big-parallel" >>/etc/nix/machines
     '';
   };
 
@@ -214,6 +215,23 @@ in
       remote="build4.vedenemo.dev"
       nix_target="apps.x86_64-linux.run-vm-builder"
       local_port="3022"
+      ${run-builder-vm} "$remote" "$nix_target" "$local_port"
+    '';
+  };
+
+  systemd.services.builder-vm-aarch-start = {
+    after = [ "network-online.target" ];
+    before = [ "nix-daemon.service" ];
+    requires = [ "network-online.target" ];
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      RemainAfterExit = true;
+      Restart = "no";
+    };
+    script = ''
+      remote="hetzarm.vedenemo.dev"
+      nix_target="apps.aarch64-linux.run-vm-builder"
+      local_port="4022"
       ${run-builder-vm} "$remote" "$nix_target" "$local_port"
     '';
   };
@@ -260,6 +278,15 @@ in
       Port 3022
       User remote-builder
       IdentityFile /run/secrets/id_builder
+      # We check the build4.vedenemo.dev key already
+      StrictHostKeyChecking no
+
+      Host ephemeral-hetzarm
+      Hostname localhost
+      Port 4022
+      User remote-builder
+      IdentityFile /run/secrets/id_builder
+      # We check the hetzarm.vedenemo.dev key already
       StrictHostKeyChecking no
 
       Host builder.vedenemo.dev
