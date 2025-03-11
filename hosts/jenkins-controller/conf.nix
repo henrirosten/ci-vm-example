@@ -7,6 +7,38 @@
 }:
 let
   jenkins-casc = ./jenkins-casc.yaml;
+  run-builder-vm = pkgs.writeShellScript "run-builder-vm" ''
+    set -eu
+    remote="$1"
+    nix_target="$2"
+    local_port="$3"
+    TMPWORKDIR="$(mktemp --dry-run --directory --suffix .nix-vm-builder)"
+    echo "Using TMPWORKDIR '$TMPWORKDIR' on remote '$remote'"
+    on_term () {
+      set -x
+      echo "Removing '$TMPWORKDIR' on '$remote'"
+      ${pkgs.openssh}/bin/ssh "$remote" "rm -fr $TMPWORKDIR || echo Failed"
+    }
+    trap on_term TERM
+
+    # Copy the flake source from /shared/source over to remote at TMPWORKDIR
+    # so we can nix run the nix_target on remote
+    ${pkgs.openssh}/bin/scp -r /shared/source "$remote":"$TMPWORKDIR"
+
+    # Run the builder vm on the remote over ssh, forwarding the
+    # 'localhost:local_port' over to remote port '2322'. After builder vm
+    # boots-up, its ssh service is available on remote:2322 so this allows
+    # reaching the remote builder over ssh at localhost:local_port.
+    # The '-tt' option causes the remote process (nix run ...) to terminate
+    # when the below ssh process is terminated.
+    echo "Starting builder vm '$nix_target' - ssh at local port '$local_port'"
+    ${pkgs.openssh}/bin/ssh -L "$local_port":localhost:2322 "$remote" -tt \
+    "\
+      export TMPDIR="$TMPWORKDIR"
+      cd "$TMPWORKDIR";\
+      nix run --refresh .#"$nix_target";\
+    ";
+  '';
 in
 {
   sops.defaultSopsFile = ./secrets.yaml;
@@ -20,13 +52,14 @@ in
       hosts-common
       user-hrosten
     ]);
+
   virtualisation.vmVariant.virtualisation.sharedDirectories.shr = {
-    source = "/tmp/shared/jenkins-controller";
+    source = "$HOME/.config/vmshared/jenkins-controller";
     target = "/shared";
   };
   virtualisation.vmVariant.services.openssh.hostKeys = [
     {
-      path = "/shared/ssh_host_ed25519_key";
+      path = "/shared/secrets/ssh_host_ed25519_key";
       type = "ed25519";
     }
   ];
@@ -163,41 +196,52 @@ in
       Restart = "on-failure";
     };
     script = ''
+      # If this is not the first time this instance of jenkins-controller
+      # boots-up, the ephemeral builders' public keys from the pervious power
+      # cycle might still be around in /root/.ssh/known_hosts. Since we
+      # spin-up new ephemeral builders every time jenkins-controller
+      # boots-up, we also need to clean the /root/.ssh/known_hosts
+      rm -fr /root/.ssh/known_hosts
+
       mkdir -p /etc/nix
-      # Retrieved with 'base64 -w0 /etc/ssh/ssh_host_ed25519_key.pub'
-      build4_pubkey='c3NoLWVkMjU1MTkgQUFBQUMzTnphQzFsWkRJMU5URTVBQUFBSU1yTFJWQWk3ZERYVUYxRUZUZDdvSEx5b2x4RlNrRTZNUk9YdklNK1VxRG8gcm9vdEBidWlsZDQK'
-      hetzarm_pubkey='c3NoLWVkMjU1MTkgQUFBQUMzTnphQzFsWkRJMU5URTVBQUFBSUx4NHpVNGdJa1RZLzFvS0VPa2Y5Z1RKQ2hkeC9qUjNsRGdaN3AvYzdMRUsgcm9vdEBVYnVudHUtMjIwNC1qYW1teS1hcm02NC1iYXNlCg=='
-      common_elems='/run/secrets/remote_build_ssh_key 8 10 kvm,nixos-test,benchmark,big-parallel -'
-      echo "ssh://remote-build@build4.vedenemo.dev x86_64-linux $common_elems $build4_pubkey" >/etc/nix/machines
-      echo "ssh://remote-build@hetzarm.vedenemo.dev aarch64-linux $common_elems $hetzarm_pubkey" >>/etc/nix/machines
+      echo "ssh://ephemeral-build4 x86_64-linux - 20 10 kvm,nixos-test,benchmark,big-parallel" >/etc/nix/machines
+      echo "ssh://ephemeral-hetzarm aarch64-linux - 20 10 kvm,nixos-test,benchmark,big-parallel" >>/etc/nix/machines
     '';
   };
 
-  # fail2ban on the builder(s) dislike ssh-keyscan if repeated too quickly
-  # which is why we manually hardcode the base64 encoded public key in the
-  # 'populate-builder-machines' service, instead of using the below service:
-  #systemd.services.populate-known-hosts = {
-  #  after = [
-  #    "network-online.target"
-  #    "populate-builder-machines.service"
-  #  ];
-  #  before = [ "nix-daemon.service" ];
-  #  requires = [
-  #    "network-online.target"
-  #    "populate-builder-machines.service"
-  #  ];
-  #  wantedBy = [ "multi-user.target" ];
-  #  serviceConfig = {
-  #    Type = "oneshot";
-  #    RemainAfterExit = true;
-  #    Restart = "on-failure";
-  #  };
-  #  script = ''
-  #    umask 077
-  #    mkdir -p /root/.ssh
-  #    cat /etc/nix/machines | cut -d" " -f1 | cut -d" " -f1 | cut -d "@" -f2 | xargs ${pkgs.openssh}/bin/ssh-keyscan -v -t ed25519 > /root/.ssh/known_hosts
-  #  '';
-  #};
+  systemd.services.builder-vm-x86-start = {
+    after = [ "network-online.target" ];
+    before = [ "nix-daemon.service" ];
+    requires = [ "network-online.target" ];
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      RemainAfterExit = true;
+      Restart = "no";
+    };
+    script = ''
+      remote="build4.vedenemo.dev"
+      nix_target="apps.x86_64-linux.run-vm-builder"
+      local_port="3022"
+      ${run-builder-vm} "$remote" "$nix_target" "$local_port"
+    '';
+  };
+
+  systemd.services.builder-vm-aarch-start = {
+    after = [ "network-online.target" ];
+    before = [ "nix-daemon.service" ];
+    requires = [ "network-online.target" ];
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      RemainAfterExit = true;
+      Restart = "no";
+    };
+    script = ''
+      remote="hetzarm.vedenemo.dev"
+      nix_target="apps.aarch64-linux.run-vm-builder"
+      local_port="4022"
+      ${run-builder-vm} "$remote" "$nix_target" "$local_port"
+    '';
+  };
 
   # Enable early out-of-memory killing.
   # Make nix builds more likely to be killed over more important services.
@@ -220,12 +264,58 @@ in
   boot.kernel.sysctl."vm.overcommit_memory" = "1";
 
   nix.extraOptions = ''
-    trusted-public-keys = prod-cache.vedenemo.dev~1:JcytRNMJJdYJVQCYwLNsrfVhct5dhCK2D3fa6O1WHOI= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
-    substituters = https://prod-cache.vedenemo.dev https://cache.nixos.org
+    trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY=
+    substituters = https://cache.nixos.org
     connect-timeout = 5
     system-features = nixos-test benchmark big-parallel kvm
-    builders-use-substitutes = true
+    builders-use-substitutes = false
     builders = @/etc/nix/machines
-    max-jobs = 1
+    max-jobs = 0
   '';
+  programs.ssh = {
+
+    # Known builder host public keys, these go to /root/.ssh/known_hosts
+    knownHosts."build4.vedenemo.dev".publicKey =
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMrLRVAi7dDXUF1EFTd7oHLyolxFSkE6MROXvIM+UqDo";
+    knownHosts."builder.vedenemo.dev".publicKey =
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHSI8s/wefXiD2h3I3mIRdK+d9yDGMn0qS5fpKDnSGqj";
+    knownHosts."hetzarm.vedenemo.dev".publicKey =
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILx4zU4gIkTY/1oKEOkf9gTJChdx/jR3lDgZ7p/c7LEK";
+
+    # Custom options to /etc/ssh/ssh_config
+    extraConfig = lib.mkAfter ''
+      # VM we spin-up on build4.vedenemo.dev with builder-vm-x86-start service
+      Host ephemeral-build4
+      Hostname localhost
+      Port 3022
+      User remote-builder
+      IdentityFile /run/secrets/id_builder
+      # We check the build4.vedenemo.dev key already
+      StrictHostKeyChecking no
+
+      # VM we spin-up on hetzarm.vedenemo.dev with builder-vm-aarch-start service
+      Host ephemeral-hetzarm
+      Hostname localhost
+      Port 4022
+      User remote-builder
+      IdentityFile /run/secrets/id_builder
+      # We check the hetzarm.vedenemo.dev key already
+      StrictHostKeyChecking no
+
+      Host builder.vedenemo.dev
+      Hostname builder.vedenemo.dev
+      User remote-build
+      IdentityFile /run/secrets/remote_build_ssh_key
+
+      Host build4.vedenemo.dev
+      Hostname build4.vedenemo.dev
+      User remote-build
+      IdentityFile /run/secrets/remote_build_ssh_key
+
+      Host hetzarm.vedenemo.dev
+      Hostname hetzarm.vedenemo.dev
+      User remote-build
+      IdentityFile /run/secrets/remote_build_ssh_key
+    '';
+  };
 }

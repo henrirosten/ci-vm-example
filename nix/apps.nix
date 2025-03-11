@@ -22,7 +22,7 @@ let
       fi
       secret="$1"
       todir="$2"
-      mkdir -p "$todir"
+      umask 077; mkdir -p "$todir"
       rm -fr "$todir/ssh_host_ed25519_key"
       tofile="$todir/ssh_host_ed25519_key"
       umask 377
@@ -30,15 +30,48 @@ let
       echo "[+] Decrypted sops key '$tofile'"
     '');
 
-  run-vm-with-secrets =
+  run-vm-with-share =
     pkgs: cfg:
-    (pkgs.writeShellScriptBin "run-vm-with-secrets" ''
-      echo "[+] Running $(realpath "$0")"
+    (pkgs.writeShellScriptBin "run-vm-with-share" ''
+      set -eu
+      echo "[+] Running '$(realpath "$0")'"
+      # Host path of the shr share directory
+      sharedir="${cfg.virtualisation.vmVariant.virtualisation.sharedDirectories.shr.source}"
+      # See nixpkgs: virtualisation/qemu-vm.nix
+      export TMPDIR="$sharedir"
+      on_exit () {
+        echo "[+] Removing '$sharedir'"
+        rm -fr "$sharedir"
+      }
+      trap on_exit EXIT
+
+      # Decrypt vm secret(s)
       secret="${self.outPath}/hosts/${cfg.system.name}/secrets.yaml"
-      todir="${cfg.virtualisation.vmVariant.virtualisation.sharedDirectories.shr.source}"
+      todir="$sharedir/secrets"
       ${decrypt-sops-key pkgs} "$secret" "$todir"
+
+      # Copy the flake source tree to the share
+      umask 077; cp -a -R --no-preserve=mode,ownership "${self.outPath}" "$sharedir/source"
+
+      # Run vm with the share mounted inside the virtual machine
       ${pkgs.lib.getExe cfg.system.build.vm}
-      rm -fr "$todir/ssh_host_ed25519_key"
+    '');
+
+  run-vm =
+    pkgs: cfg:
+    (pkgs.writeShellScriptBin "run-vm" ''
+      set -eu
+      echo "[+] Running '$(realpath "$0")'"
+      if [ -z "$TMPDIR" ]; then
+        export TMPDIR="$(mktemp --directory --suffix .nix-vm-tmpdir)"
+      fi
+      on_exit () {
+        echo "[+] Removing '$TMPDIR'"
+        rm -fr "$TMPDIR"
+      }
+      trap on_exit EXIT
+
+      ${pkgs.lib.getExe cfg.system.build.vm}
     '');
 in
 {
@@ -49,17 +82,21 @@ in
     {
       run-vm-builder = {
         type = "app";
-        program = self.nixosConfigurations.vm-builder-x86.config.system.build.vm;
+        program = run-vm pkgs self.nixosConfigurations.vm-builder-x86.config;
       };
       run-vm-jenkins-controller = {
         type = "app";
-        program = run-vm-with-secrets pkgs self.nixosConfigurations.vm-jenkins-controller.config;
+        program = run-vm-with-share pkgs self.nixosConfigurations.vm-jenkins-controller.config;
       };
     };
-  flake.apps."aarch64-linux" = {
-    run-vm-builder = {
-      type = "app";
-      program = self.nixosConfigurations.vm-builder-aarch.config.system.build.vm;
+  flake.apps."aarch64-linux" =
+    let
+      pkgs = import inputs.nixpkgs { system = "aarch64-linux"; };
+    in
+    {
+      run-vm-builder = {
+        type = "app";
+        program = run-vm pkgs self.nixosConfigurations.vm-builder-aarch.config;
+      };
     };
-  };
 }
